@@ -1,0 +1,14 @@
+{
+  "name": "supabase-rls-rules",
+  "description": "Supabase RLS and grants rules for AI coding agents.",
+  "owner": { "name": "Mateus Zingano", "url": "https://shipsealed.com" },
+  "plugins": [
+    {
+      "name": "supabase-rls",
+      "source": ".",
+      "description": "Rules for writing Supabase migrations, RLS policies and grants that don't leak data.",
+      "category": "security",
+      "tags": ["supabase", "rls", "postgres"]
+    }
+  ]
+}

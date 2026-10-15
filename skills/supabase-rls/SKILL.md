@@ -1,0 +1,59 @@
+---
+name: supabase-rls
+description: Write Supabase migrations, RLS policies and grants that do not leak data. Use when creating or changing Supabase tables, policies, grants, views or security definer functions, when handling the service_role key, or when debugging 42501 permission denied, 42P17 infinite recursion, PGRST116, PGRST205, or an update/delete that silently changes nothing.
+---
+
+# Supabase RLS and grants: rules for writing secure migrations
+
+Apply these whenever you create or change a Supabase table, view, function, policy or grant, or write client code that reads or writes Supabase data.
+
+## Every table in an exposed schema
+- Enable RLS in the **same migration** that creates the table: `alter table public.x enable row level security;`. A table must never exist without it.
+- RLS on with no policy denies everything. Add the policies the app needs in that same migration.
+- Grant explicitly, per table, only to the role that needs it and only the operations the app uses:
+  `grant select on public.x to authenticated;`
+  New tables don't get automatic grants for `anon`/`authenticated`/`service_role` (Supabase change of Oct 30, 2026); without a grant the API returns `42501 permission denied for table`.
+- Never "fix" a 42501 with `grant ... on all tables in schema public to anon, authenticated`. It also grants every table with RLS off, making it readable and writable with the public anon key.
+- Grant to `anon` only for data that signed-out visitors should read, and pair it with a policy that allows exactly that.
+
+## Policies
+- Write one policy per operation (`for select`, `for insert`, `for update`, `for delete`) and name the role with `to authenticated` (or `to anon`).
+- Wrap `auth.uid()` as `(select auth.uid())` so Postgres evaluates it once per query, not per row.
+- INSERT needs `with check`; UPDATE needs both `using` (which rows) and `with check` (what they may become), otherwise a user can reassign a row to someone else.
+- UPDATE also needs a SELECT policy for the same rows, or it silently affects 0 rows.
+- Never use `using (true)` / `with check (true)` on private data. Allow it only for data that is public on purpose, and say so in a comment.
+- A policy must not query the table it protects (that raises `42P17 infinite recursion detected in policy`). Put the lookup in a `security definer` function in a **non-exposed** schema (e.g. `private`), with `set search_path = ''`, schema-qualified names, a filter on `(select auth.uid())`, `revoke all ... from public` and `grant execute` only to `authenticated`.
+- Multi-tenant data: scope rows to the caller's tenant through a membership lookup (the helper above), never through a value the client sends.
+
+## Views, functions, other schemas
+- Views run with the owner's privileges by default and skip RLS. Create them with `with (security_invoker = true)`, or don't expose them.
+- `security definer` functions bypass RLS: keep them out of exposed schemas unless they are meant as an API, and validate the caller inside.
+- A table in a non-`public` schema needs that schema in the Data API's exposed schemas, `grant usage on schema ... to <role>`, plus the table grant and RLS.
+
+## Keys and clients
+- The `anon` / publishable key is public by design; RLS is what protects data.
+- Never put the `service_role` / `sb_secret_...` key in frontend code, `NEXT_PUBLIC_*` / `VITE_*` env vars, or anything shipped to the browser. It bypasses all RLS. Use it only on the server.
+- On the server, create the Supabase client from the user's session (request cookies) so `auth.uid()` resolves; otherwise queries run as `anon`.
+
+## Errors and what they mean
+- `42501 permission denied for table|schema`: missing grant or schema usage (before RLS runs).
+- `new row violates row-level security policy`: an INSERT/UPDATE failed `with check`.
+- `PGRST116 Cannot coerce the result to a single JSON object` with `.single()` and a row that exists: RLS is hiding it from this caller (or there's no session). Use `.maybeSingle()` only when 0 rows is a normal answer.
+- An update or delete that returns no error but changes nothing: no matching UPDATE/DELETE (or SELECT) policy. Chain `.select()` to see the affected rows.
+- `PGRST205 Could not find the table ... in the schema cache`: wrong name/schema, schema not exposed, or a stale cache (`notify pgrst, 'reload schema';`).
+
+## Prove it
+- Test policies as the real roles (`anon`, `authenticated` as user A and as user B), not in the SQL editor, which bypasses RLS.
+- Check what the API roles can reach:
+  ```sql
+  select c.relname,
+         has_table_privilege('anon', c.oid, 'select') as anon_can_read,
+         c.relrowsecurity as rls_on
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind = 'r'
+  order by 1;
+  ```
+  `anon_can_read = true` with `rls_on = false` means the table is public.
+- Gate it in CI: `npx airlock-rls` fails the build when a table ships without RLS or with an always-true policy.
+
+Guides with tested SQL for each rule: https://shipsealed.com/rls/

@@ -1,0 +1,10 @@
+{
+  "name": "supabase-rls",
+  "version": "0.1.0",
+  "description": "Rules for writing Supabase migrations, RLS policies and grants that don't leak data.",
+  "author": { "name": "Mateus Zingano", "url": "https://shipsealed.com" },
+  "homepage": "https://shipsealed.com/rls/",
+  "repository": "https://github.com/mateuszingano/supabase-rls-rules",
+  "license": "MIT",
+  "keywords": ["supabase", "rls", "row-level-security", "postgres", "security"]
+}
