@@ -16,7 +16,8 @@ Apply these whenever you create or change a Supabase table, view, function, poli
 ## Policies
 - Write one policy per operation (`for select`, `for insert`, `for update`, `for delete`) and name the role with `to authenticated` (or `to anon`).
 - Wrap `auth.uid()` as `(select auth.uid())` so Postgres evaluates it once per query, not per row.
-- INSERT needs `with check`; UPDATE needs both `using` (which rows) and `with check` (what they may become), otherwise a user can reassign a row to someone else.
+- INSERT policies need `with check` (they can't have `using`, and without `with check` they let no rows in). On UPDATE, write both `using` (which rows) and `with check` (what they may become). If `with check` is missing, Postgres checks the new row against `using`, which is only safe when `using` is as strict as what a row may become: with an `or` (shared or team rows) a row can be handed to another user.
+- No policy protects a column it doesn't mention: an owner policy on `user_id` won't stop a user from changing `is_admin` on their own row. For sensitive columns, grant `update` only on the columns users may change (`grant update (body) on public.notes to authenticated;`).
 - UPDATE also needs a SELECT policy for the same rows, or it silently affects 0 rows.
 - Never use `using (true)` / `with check (true)` on private data. Allow it only for data that is public on purpose, and say so in a comment.
 - A policy must not query the table it protects (that raises `42P17 infinite recursion detected in policy`). Put the lookup in a `security definer` function in a **non-exposed** schema (e.g. `private`), with `set search_path = ''`, schema-qualified names, a filter on `(select auth.uid())`, `revoke all ... from public` and `grant execute` only to `authenticated`.
